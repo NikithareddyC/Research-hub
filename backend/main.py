@@ -1,11 +1,12 @@
-from fastapi import FastAPI, HTTPException, BackgroundTasks
+from fastapi import FastAPI, HTTPException
 from fastapi.middleware.cors import CORSMiddleware
 from pydantic import BaseModel
 from typing import List, Optional
 import logging
 from datetime import datetime
 
-from config import FRONTEND_URL
+from config import FRONTEND_URL, CORE_API_KEY, CROSSREF_API_KEY, OPENALEX_API_KEY
+from services.orchestrator import SearchOrchestrator
 
 # Configure logging
 logging.basicConfig(level=logging.INFO)
@@ -20,10 +21,17 @@ app = FastAPI(
 # CORS middleware
 app.add_middleware(
     CORSMiddleware,
-    allow_origins=[FRONTEND_URL, "http://localhost:5173", "http://localhost:3000"],
+    allow_origins=[FRONTEND_URL, "http://localhost:5173", "http://localhost:3000", "*"],
     allow_credentials=True,
     allow_methods=["*"],
     allow_headers=["*"],
+)
+
+# Initialize search orchestrator
+orchestrator = SearchOrchestrator(
+    core_api_key=CORE_API_KEY,
+    crossref_api_key=CROSSREF_API_KEY,
+    openalex_email=OPENALEX_API_KEY,
 )
 
 # Pydantic models
@@ -31,10 +39,10 @@ class PaperSummary(BaseModel):
     id: str
     title: str
     authors: List[str]
-    published_date: Optional[str]
+    published_date: Optional[str] = None
     summary: str
     relevance_score: float
-    source: str  # arxiv, crossref, core, openalex, pubmed
+    source: str
     url: str
     citations_count: Optional[int] = 0
     abstract: Optional[str] = None
@@ -69,7 +77,7 @@ async def health_check():
     return {"status": "ok", "timestamp": datetime.utcnow()}
 
 @app.post("/api/v1/search", response_model=SearchResponse)
-async def search_papers(request: SearchRequest, background_tasks: BackgroundTasks):
+async def search_papers(request: SearchRequest):
     """
     Search for papers across multiple academic databases.
     
@@ -84,23 +92,49 @@ async def search_papers(request: SearchRequest, background_tasks: BackgroundTask
         
         if request.limit > 500:
             request.limit = 500
+
+        valid_sources = {"arxiv", "crossref", "core", "openalex", "pubmed"}
+        request.sources = [s for s in request.sources if s in valid_sources]
+        if not request.sources:
+            request.sources = ["arxiv", "crossref", "openalex"]
         
         logger.info(f"Search query: {request.query}, sources: {request.sources}")
         
-        # TODO: Implement actual search logic
+        result = await orchestrator.search(
+            query=request.query,
+            sources=request.sources,
+            limit=request.limit,
+            sort_by=request.sort_by,
+        )
+
         papers = []
-        
+        for p in result["papers"]:
+            papers.append(PaperSummary(
+                id=p.get("id", ""),
+                title=p.get("title", "Untitled"),
+                authors=p.get("authors", []),
+                published_date=p.get("published_date"),
+                summary=p.get("summary", ""),
+                relevance_score=p.get("relevance_score", 0.0),
+                source=p.get("source", "unknown"),
+                url=p.get("url", ""),
+                citations_count=p.get("citations_count", 0),
+                abstract=p.get("abstract"),
+            ))
+
         return SearchResponse(
             query=request.query,
-            total_papers=len(papers),
+            total_papers=result["total_papers"],
             papers=papers,
-            search_time=0.0,
+            search_time=result["search_time"],
             timestamp=datetime.utcnow()
         )
     
+    except HTTPException:
+        raise
     except Exception as e:
-        logger.error(f"Search error: {str(e)}")
-        raise HTTPException(status_code=500, detail=str(e))
+        logger.error(f"Search error: {str(e)}", exc_info=True)
+        raise HTTPException(status_code=500, detail=f"Search failed: {str(e)}")
 
 @app.get("/api/v1/paper/{paper_id}")
 async def get_paper_details(paper_id: str):

@@ -2,6 +2,8 @@ import { useState } from 'react'
 import axios from 'axios'
 import './App.css'
 
+const API_BASE = import.meta.env.VITE_API_URL || ''
+
 interface Paper {
   id: string
   title: string
@@ -21,6 +23,7 @@ export default function App() {
   const [error, setError] = useState('')
   const [sources, setSources] = useState(['arxiv', 'crossref', 'openalex'])
   const [sortBy, setSortBy] = useState('relevance')
+  const [searchTime, setSearchTime] = useState<number | null>(null)
 
   const handleSearch = async (e: React.FormEvent) => {
     e.preventDefault()
@@ -33,16 +36,18 @@ export default function App() {
     setLoading(true)
     setError('')
     setPapers([])
+    setSearchTime(null)
 
     try {
-      const response = await axios.post('/api/v1/search', {
+      const response = await axios.post(`${API_BASE}/api/v1/search`, {
         query,
         sources,
-        limit: 100,
+        limit: 50,
         sort_by: sortBy
       })
 
       setPapers(response.data.papers)
+      setSearchTime(response.data.search_time)
       if (response.data.papers.length === 0) {
         setError('No papers found for your query')
       }
@@ -116,13 +121,14 @@ export default function App() {
 
           {error && <div className="error-message">{error}</div>}
 
-          <div className="results">
-            {papers.length > 0 && (
-              <div className="results-header">
-                <h2>Found {papers.length} papers</h2>
-              </div>
-            )}
+          {loading && (
+            <div className="loading-indicator">
+              <div className="spinner"></div>
+              <p>Searching across {sources.map(s => s.charAt(0).toUpperCase() + s.slice(1)).join(', ')}...</p>
+            </div>
+          )}
 
+          <div className="results">
             <div className="papers-grid">
               {papers.map((paper) => (
                 <div key={paper.id} className="paper-card">
