@@ -23,7 +23,6 @@ export default function App() {
   const [error, setError] = useState('')
   const [sources, setSources] = useState(['arxiv', 'crossref', 'openalex'])
   const [sortBy, setSortBy] = useState('relevance')
-  const [searchTime, setSearchTime] = useState<number | null>(null)
 
   const handleSearch = async (e: React.FormEvent) => {
     e.preventDefault()
@@ -36,7 +35,6 @@ export default function App() {
     setLoading(true)
     setError('')
     setPapers([])
-    setSearchTime(null)
 
     try {
       const response = await axios.post(`${API_BASE}/api/v1/search`, {
@@ -47,7 +45,6 @@ export default function App() {
       })
 
       setPapers(response.data.papers)
-      setSearchTime(response.data.search_time)
       if (response.data.papers.length === 0) {
         setError('No papers found for your query')
       }
